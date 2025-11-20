@@ -1,0 +1,180 @@
+name: Build iOS App
+
+on:
+  push:
+    branches: [ main, develop ]
+    tags: [ 'v*' ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+    inputs:
+      build_type:
+        description: 'Build type'
+        required: true
+        default: 'debug'
+        type: choice
+        options:
+        - debug
+        - release
+
+env:
+  FLUTTER_VERSION: '3.24.0'
+  XCODE_VERSION: '15.0'
+
+jobs:
+  build-ios:
+    runs-on: macos-latest
+    timeout-minutes: 120
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+        fetch-depth: 0
+
+    - name: Setup Java
+      uses: actions/setup-java@v4
+      with:
+        distribution: 'temurin'
+        java-version: '17'
+
+    - name: Setup Flutter
+      uses: subosito/flutter-action@v2
+      with:
+        flutter-version: ${{ env.FLUTTER_VERSION }}
+        channel: 'stable'
+        cache: true
+
+    - name: Install Flutter dependencies
+      run: |
+        flutter doctor -v
+        flutter config --enable-ios
+        flutter config --enable-macos
+
+    - name: Cache CocoaPods
+      uses: actions/cache@v3
+      with:
+        path: |
+          ios/Pods
+          ~/Library/Caches/CocoaPods
+          ~/.cocoapods
+        key: ${{ runner.os }}-pods-${{ hashFiles('ios/Podfile.lock') }}
+        restore-keys: |
+          ${{ runner.os }}-pods-
+
+    - name: Setup Xcode
+      uses: maxim-lobanov/setup-xcode@v1
+      with:
+        xcode-version: ${{ env.XCODE_VERSION }}
+
+    - name: Install CocoaPods
+      run: |
+        cd ios
+        pod --version
+        pod install --repo-update
+        cd ..
+
+    - name: Get Flutter dependencies
+      run: |
+        flutter pub get
+        flutter pub deps
+
+    - name: Verify project structure
+      run: |
+        ls -la
+        ls -la ios/
+        ls -la ios/Runner.xcworkspace/ || echo "Workspace not found"
+
+    - name: Build iOS (Debug)
+      if: github.event.inputs.build_type == 'debug' || github.event.inputs.build_type == ''
+      run: |
+        flutter build ios --debug --no-codesign --verbose
+
+    - name: Build iOS (Release)
+      if: github.event.inputs.build_type == 'release' || startsWith(github.ref, 'refs/tags/v')
+      run: |
+        # Create build directory
+        mkdir -p build/ios/NoCodesign
+
+        # Build without codesigning
+        flutter build ios --release --no-codesign --verbose
+
+        # Export the build
+        echo "📱 iOS Release build completed"
+
+    - name: Build IPA (Debug)
+      if: github.event.inputs.build_type == 'debug' || github.event.inputs.build_type == ''
+      run: |
+        # Create a temporary build configuration for debug
+        flutter build ios --debug --no-codesign
+
+        echo "📦 Debug build completed"
+        echo "Note: For actual device deployment, you need to:"
+        echo "1. Add proper signing certificates to GitHub Secrets"
+        echo "2. Configure Xcode project with correct Bundle ID"
+        echo "3. Set up provisioning profiles"
+
+    - name: Archive build artifacts
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: ios-build-${{ github.event.inputs.build_type || 'debug' }}
+        path: |
+          build/
+          ios/build/
+        retention-days: 30
+
+    - name: Generate build summary
+      if: always()
+      run: |
+        echo "## 🚀 Build Summary" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "| Component | Status |" >> $GITHUB_STEP_SUMMARY
+        echo "|-----------|--------|" >> $GITHUB_STEP_SUMMARY
+        echo "| Flutter | ✅ ${{ env.FLUTTER_VERSION }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| Xcode | ✅ ${{ env.XCODE_VERSION }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| Build Type | ✅ ${{ github.event.inputs.build_type || 'debug' }} |" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### 📱 Build Output" >> $GITHUB_STEP_SUMMARY
+        echo "- Debug build: Available in artifacts" >> $GITHUB_STEP_SUMMARY
+        echo "- Release build: Available in artifacts (if triggered)" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### ⚠️ Important Notes" >> $GITHUB_STEP_SUMMARY
+        echo "1. This build is **unsigned** - for testing only" >> $GITHUB_STEP_SUMMARY
+        echo "2. For App Store distribution, configure signing certificates" >> $GITHUB_STEP_SUMMARY
+        echo "3. Bundle ID: com.nebula.clashmi" >> $GITHUB_STEP_SUMMARY
+
+  build-android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Setup Java
+      uses: actions/setup-java@v4
+      with:
+        distribution: 'temurin'
+        java-version: '17'
+
+    - name: Setup Flutter
+      uses: subosito/flutter-action@v2
+      with:
+        flutter-version: ${{ env.FLUTTER_VERSION }}
+        channel: 'stable'
+        cache: true
+
+    - name: Build Android APK
+      run: |
+        flutter pub get
+        flutter build apk --debug
+        flutter build apk --release
+
+    - name: Archive Android build
+      uses: actions/upload-artifact@v4
+      with:
+        name: android-build
+        path: build/app/outputs/flutter-apk/
+        retention-days: 30

@@ -1,0 +1,71 @@
+name: Build Development Version
+
+on:
+  push:
+    branches: [ develop, feature/* ]
+  workflow_dispatch:
+
+env:
+  FLUTTER_VERSION: '3.24.0'
+
+jobs:
+  build-dev:
+    runs-on: macos-latest
+    timeout-minutes: 60
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Setup Flutter
+      uses: subosito/flutter-action@v2
+      with:
+        flutter-version: ${{ env.FLUTTER_VERSION }}
+        channel: 'stable'
+        cache: true
+
+    - name: Setup Xcode
+      uses: maxim-lobanov/setup-xcode@v1
+      with:
+        xcode-version: '15.0'
+
+    - name: Get dependencies
+      run: |
+        flutter pub get
+        cd ios
+        pod install --repo-update
+        cd ..
+
+    - name: Analyze code
+      run: |
+        flutter analyze
+
+    - name: Build iOS (Debug)
+      run: |
+        flutter build ios --debug --no-codesign
+
+    - name: Build iOS Simulator
+      run: |
+        flutter build ios --simulator --debug
+
+    - name: Build Web
+      run: |
+        flutter build web
+
+    - name: Upload development builds
+      uses: actions/upload-artifact@v4
+      with:
+        name: dev-build-${{ github.sha }}
+        path: |
+          build/ios/
+          build/web/
+        retention-days: 7
+
+    - name: Development build summary
+      run: |
+        echo "## 🔧 Development Build Complete" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "- Branch: ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
+        echo "- Commit: ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+        echo "- Flutter: ${{ env.FLUTTER_VERSION }}" >> $GITHUB_STEP_SUMMARY
+        echo "- Status: ✅ Build successful" >> $GITHUB_STEP_SUMMARY
